@@ -63,5 +63,9 @@ func multiLog() {
 	logger.Info("debug log", `file`, fw.Filename)
 	logger.Warn("warning message")
 	logger.Error("error......")
+
+	slog.SetDefault(logger)
+	slog.Log(context.Background(), slog.LevelInfo, "multi writer for default slog")
+	slog.With("keyX", "valueX").Warn("warn message with kv pair")
 }
 ```
