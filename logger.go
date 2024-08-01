@@ -56,13 +56,18 @@ var (
 //	level: log level: debug, info, warn, error
 //	maxSize: the maximum size in bytes of the log file before it gets rotated
 //	maxBackups: the maximum number of old log files to retain
-func New(file, level string, maxSize int64, maxBackups int) *slog.Logger {
+func New(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) *slog.Logger {
 	writer := &FileWriter{
 		EnsureFolder: true,
 		Filename:     file,
 		MaxBackups:   maxBackups,
 		MaxSize:      maxSize,
 		LocalTime:    true,
+	}
+	if len(opts) == 1 && opts[0] != nil {
+		return slog.New(&goIDHandler{
+			handler: slog.NewJSONHandler(writer, opts[0]),
+		})
 	}
 	return slog.New(&goIDHandler{
 		handler: slog.NewJSONHandler(writer, &slog.HandlerOptions{
@@ -78,13 +83,19 @@ func New(file, level string, maxSize int64, maxBackups int) *slog.Logger {
 //	level: log level: debug, info, warn, error
 //	maxSize: the maximum size in bytes of the log file before it gets rotated
 //	maxBackups: the maximum number of old log files to retain
-func NewWithStack(file, level string, maxSize int64, maxBackups int) *slog.Logger {
+func NewWithStack(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) *slog.Logger {
 	writer := &FileWriter{
 		EnsureFolder: true,
 		Filename:     file,
 		MaxBackups:   maxBackups,
 		MaxSize:      maxSize,
 		LocalTime:    true,
+	}
+	if len(opts) == 1 && opts[0] != nil {
+		return slog.New(&goIDHandler{
+			handler:    slog.NewJSONHandler(writer, opts[0]),
+			stacktrace: true,
+		})
 	}
 	return slog.New(&goIDHandler{
 		handler: slog.NewJSONHandler(writer, &slog.HandlerOptions{
@@ -100,8 +111,8 @@ func NewWithStack(file, level string, maxSize int64, maxBackups int) *slog.Logge
 //	level: log level: debug, info, warn, error
 //	maxSize: the maximum size in bytes of the log file before it gets rotated
 //	maxBackups: the maximum number of old log files to retain
-func SetDefault(file, level string, maxSize int64, maxBackups int) {
-	slog.SetDefault(New(file, level, maxSize, maxBackups))
+func SetDefault(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) {
+	slog.SetDefault(New(file, level, maxSize, maxBackups, opts...))
 }
 
 // SetDefaultWithStack set global default logger
@@ -110,6 +121,6 @@ func SetDefault(file, level string, maxSize int64, maxBackups int) {
 //	level: log level: debug, info, warn, error
 //	maxSize: the maximum size in bytes of the log file before it gets rotated
 //	maxBackups: the maximum number of old log files to retain
-func SetDefaultWithStack(file, level string, maxSize int64, maxBackups int) {
-	slog.SetDefault(New(file, level, maxSize, maxBackups))
+func SetDefaultWithStack(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) {
+	slog.SetDefault(New(file, level, maxSize, maxBackups, opts...))
 }
