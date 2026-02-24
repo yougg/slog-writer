@@ -3,6 +3,7 @@ package slogw
 import (
 	"context"
 	"log/slog"
+	"os"
 )
 
 // goIDHandler wraps given handler and add goid attr to each log content
@@ -38,15 +39,28 @@ func (h *goIDHandler) Handle(ctx context.Context, record slog.Record) error {
 			Value: slog.StringValue(Take(3)),
 		})
 	}
-	return h.handler.Handle(ctx, record)
+
+	err := h.handler.Handle(ctx, record)
+	if record.Level == LevelFatal {
+		os.Exit(1)
+	}
+
+	return err
 }
+
+const (
+	LevelTrace = slog.Level(-8)
+	LevelFatal = slog.Level(12)
+)
 
 var (
 	Levels = map[string]slog.Level{
+		`trace`: LevelTrace,
 		`debug`: slog.LevelDebug,
 		`info`:  slog.LevelInfo,
 		`warn`:  slog.LevelWarn,
 		`error`: slog.LevelError,
+		`fatal`: LevelFatal,
 	}
 )
 
@@ -122,5 +136,5 @@ func SetDefault(file, level string, maxSize int64, maxBackups int, opts ...*slog
 //	maxSize: the maximum size in bytes of the log file before it gets rotated
 //	maxBackups: the maximum number of old log files to retain
 func SetDefaultWithStack(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) {
-	slog.SetDefault(New(file, level, maxSize, maxBackups, opts...))
+	slog.SetDefault(NewWithStack(file, level, maxSize, maxBackups, opts...))
 }
