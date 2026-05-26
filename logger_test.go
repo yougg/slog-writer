@@ -1,9 +1,24 @@
 package slogw
 
 import (
+	"io"
 	"log/slog"
 	"testing"
 )
+
+func TestGoIDHandlerPreservesWrapper(t *testing.T) {
+	handler := &goIDHandler{
+		handler: slog.NewTextHandler(io.Discard, nil),
+	}
+
+	if _, ok := handler.WithAttrs([]slog.Attr{slog.String("key", "value")}).(*goIDHandler); !ok {
+		t.Fatal("WithAttrs should preserve goIDHandler wrapper")
+	}
+
+	if _, ok := handler.WithGroup("group").(*goIDHandler); !ok {
+		t.Fatal("WithGroup should preserve goIDHandler wrapper")
+	}
+}
 
 func TestNew(t *testing.T) {
 	type args struct {

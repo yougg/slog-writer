@@ -84,7 +84,7 @@ type FileWriter struct {
 	Cleaner func(fileName string, maxBackups int, matches []os.FileInfo)
 }
 
-// Write implements io.Writer.  If write would cause the log file to be larger
+// Write implements io.Writer.  If write cause the log file to be larger
 // than MaxSize, the file is closed, rotate to include a timestamp of the
 // current time, and update symlink with log name file to the new file.
 func (w *FileWriter) Write(p []byte) (n int, err error) {
@@ -175,12 +175,11 @@ func (w *FileWriter) rotate() (err error) {
 		}
 	}
 
-	go func(newName string) {
-		os.Remove(w.Filename)
-		if !w.ProcessID {
-			_ = os.Symlink(filepath.Base(newName), w.Filename)
-		}
+	if err = w.updateSymlink(w.file.Name()); err != nil {
+		return err
+	}
 
+	go func(newName string) {
 		uid, _ := strconv.Atoi(os.Getenv("SUDO_UID"))
 		gid, _ := strconv.Atoi(os.Getenv("SUDO_GID"))
 		if uid != 0 && gid != 0 && os.Geteuid() == 0 {
@@ -229,6 +228,13 @@ func (w *FileWriter) rotate() (err error) {
 }
 
 func (w *FileWriter) create() (err error) {
+	if !w.ProcessID {
+		ok, err := w.openExistingLinkedFile()
+		if ok || err != nil {
+			return err
+		}
+	}
+
 	w.file, err = os.OpenFile(w.fileArgs(time.Now()))
 	if err != nil {
 		return err
@@ -249,12 +255,74 @@ func (w *FileWriter) create() (err error) {
 		}
 	}
 
-	err = os.Remove(w.Filename)
-	if !w.ProcessID {
-		_ = os.Symlink(filepath.Base(w.file.Name()), w.Filename)
+	return w.updateSymlink(w.file.Name())
+}
+
+func (w *FileWriter) openExistingLinkedFile() (ok bool, err error) {
+	info, err := os.Lstat(w.Filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return false, nil
 	}
 
-	return
+	name, err := os.Readlink(w.Filename)
+	if err != nil {
+		return true, err
+	}
+	if !filepath.IsAbs(name) {
+		name = filepath.Join(filepath.Dir(w.Filename), name)
+	}
+
+	file, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, w.filePerm())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return true, err
+	}
+
+	st, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return true, err
+	}
+
+	w.file = file
+	w.size = st.Size()
+	if w.MaxSize > 0 && w.size > w.MaxSize {
+		_ = w.file.Close()
+		w.file = nil
+		w.size = 0
+		return false, nil
+	}
+	if w.size == 0 && w.Header != nil {
+		if b := w.Header(st); b != nil {
+			n, err := w.file.Write(b)
+			w.size += int64(n)
+			if err != nil {
+				return true, err
+			}
+		}
+	}
+
+	return true, nil
+}
+
+func (w *FileWriter) updateSymlink(newName string) error {
+	if w.ProcessID {
+		return nil
+	}
+
+	err := os.Remove(w.Filename)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(filepath.Base(newName), w.Filename)
 }
 
 // fileArgs returns a new filename, flag, perm based on the original name and the given time.
@@ -286,10 +354,14 @@ func (w *FileWriter) fileArgs(now time.Time) (filename string, flag int, perm os
 	flag = os.O_APPEND | os.O_CREATE | os.O_WRONLY
 
 	// perm
-	perm = w.FileMode
-	if perm == 0 {
-		perm = 0644
-	}
+	perm = w.filePerm()
 
 	return
+}
+
+func (w *FileWriter) filePerm() os.FileMode {
+	if w.FileMode != 0 {
+		return w.FileMode
+	}
+	return 0644
 }

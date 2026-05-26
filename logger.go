@@ -19,12 +19,18 @@ func (h *goIDHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // WithAttrs returns a new Handler whose attributes consist of both the receiver's attributes and the arguments.
 func (h *goIDHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h.handler.WithAttrs(attrs)
+	return &goIDHandler{
+		handler:    h.handler.WithAttrs(attrs),
+		stacktrace: h.stacktrace,
+	}
 }
 
 // WithGroup returns a new Handler with the given group appended to the receiver's existing groups.
 func (h *goIDHandler) WithGroup(name string) slog.Handler {
-	return h.handler.WithGroup(name)
+	return &goIDHandler{
+		handler:    h.handler.WithGroup(name),
+		stacktrace: h.stacktrace,
+	}
 }
 
 // Handle rewrite standard json handler to add goroutine ID for each goroutine calls
