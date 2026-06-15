@@ -9,7 +9,7 @@ import (
 // goIDHandler wraps given handler and add goid attr to each log content
 type goIDHandler struct {
 	handler    slog.Handler
-	stacktrace bool
+	stackTrace bool
 }
 
 // Enabled reports whether the handler handles records at the given level.
@@ -21,7 +21,7 @@ func (h *goIDHandler) Enabled(ctx context.Context, level slog.Level) bool {
 func (h *goIDHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &goIDHandler{
 		handler:    h.handler.WithAttrs(attrs),
-		stacktrace: h.stacktrace,
+		stackTrace: h.stackTrace,
 	}
 }
 
@@ -29,17 +29,17 @@ func (h *goIDHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 func (h *goIDHandler) WithGroup(name string) slog.Handler {
 	return &goIDHandler{
 		handler:    h.handler.WithGroup(name),
-		stacktrace: h.stacktrace,
+		stackTrace: h.stackTrace,
 	}
 }
 
-// Handle rewrite standard json handler to add goroutine ID for each goroutine calls
+// Handle rewrite standard JSON handler to add goroutine ID for each goroutine calls
 func (h *goIDHandler) Handle(ctx context.Context, record slog.Record) error {
 	record.AddAttrs(slog.Attr{
 		Key:   `goid`,
 		Value: slog.IntValue(goid()),
 	})
-	if h.stacktrace {
+	if h.stackTrace {
 		record.AddAttrs(slog.Attr{
 			Key:   `stack`,
 			Value: slog.StringValue(Take(3)),
@@ -47,7 +47,7 @@ func (h *goIDHandler) Handle(ctx context.Context, record slog.Record) error {
 	}
 
 	err := h.handler.Handle(ctx, record)
-	if record.Level == LevelFatal {
+	if record.Level == FatalLevel {
 		os.Exit(1)
 	}
 
@@ -55,92 +55,147 @@ func (h *goIDHandler) Handle(ctx context.Context, record slog.Record) error {
 }
 
 const (
-	LevelTrace = slog.Level(-8)
-	LevelFatal = slog.Level(12)
+	TraceLevel = slog.Level(-8)
+	DebugLevel = slog.LevelDebug
+	InfoLevel  = slog.LevelInfo
+	WarnLevel  = slog.LevelWarn
+	ErrorLevel = slog.LevelError
+	FatalLevel = slog.Level(12)
+
+	LevelTrace = "trace"
+	LevelDebug = "debug"
+	LevelInfo  = "info"
+	LevelWarn  = "warn"
+	LevelError = "error"
+	LevelFatal = "fatal"
 )
 
 var (
 	Levels = map[string]slog.Level{
-		`trace`: LevelTrace,
-		`debug`: slog.LevelDebug,
-		`info`:  slog.LevelInfo,
-		`warn`:  slog.LevelWarn,
-		`error`: slog.LevelError,
-		`fatal`: LevelFatal,
+		LevelTrace: TraceLevel,
+		LevelDebug: DebugLevel,
+		LevelInfo:  InfoLevel,
+		LevelWarn:  WarnLevel,
+		LevelError: ErrorLevel,
+		LevelFatal: FatalLevel,
 	}
 )
+
+// Format represents the log output format.
+type Format byte
+
+const (
+	FormatJSON Format = iota // JSON format
+	FormatText               // Text format
+)
+
+// options contains all optional configurations for creating a Logger.
+type options struct {
+	slog.HandlerOptions
+	format     Format
+	level      string
+	maxSize    int64
+	maxBackups int
+	stackTrace bool
+}
+
+// Option defines the function type to configure options.
+type Option func(*options)
+
+// WithLevel sets the log level (e.g., trace, debug, info, warn, error, fatal).
+func WithLevel(level string) Option {
+	return func(o *options) {
+		o.level = level
+	}
+}
+
+// WithMaxSize sets the maximum size in bytes of the log file before it gets rotated.
+func WithMaxSize(size int64) Option {
+	return func(o *options) {
+		o.maxSize = size
+	}
+}
+
+// WithMaxBackups sets the maximum number of old log files to retain.
+func WithMaxBackups(backups int) Option {
+	return func(o *options) {
+		o.maxBackups = backups
+	}
+}
+
+// WithFormat sets the log output format (FormatJSON, FormatText).
+func WithFormat(f Format) Option {
+	return func(o *options) {
+		o.format = f
+	}
+}
+
+// WithAddSource sets whether to record the source file and line number in the log.
+func WithAddSource(addSource bool) Option {
+	return func(o *options) {
+		o.AddSource = addSource
+	}
+}
+
+// WithReplaceAttr sets the function to rewrite attributes.
+func WithReplaceAttr(replaceAttr func(groups []string, a slog.Attr) slog.Attr) Option {
+	return func(o *options) {
+		o.ReplaceAttr = replaceAttr
+	}
+}
+
+// WithStack sets whether to record stacktrace information in the log.
+func WithStack(stacktrace bool) Option {
+	return func(o *options) {
+		o.stackTrace = stacktrace
+	}
+}
 
 // New create new file logger
 //
 //	file: log file path
-//	level: log level: debug, info, warn, error
-//	maxSize: the maximum size in bytes of the log file before it gets rotated
-//	maxBackups: the maximum number of old log files to retain
-func New(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) *slog.Logger {
-	writer := &FileWriter{
-		EnsureFolder: true,
-		Filename:     file,
-		MaxBackups:   maxBackups,
-		MaxSize:      maxSize,
-		LocalTime:    true,
+//	opts: functional options to configure the logger
+func New(file string, opts ...Option) *slog.Logger {
+	o := &options{
+		format: FormatText,
+		level:  LevelInfo,
 	}
-	if len(opts) == 1 && opts[0] != nil {
-		return slog.New(&goIDHandler{
-			handler: slog.NewJSONHandler(writer, opts[0]),
-		})
-	}
-	return slog.New(&goIDHandler{
-		handler: slog.NewJSONHandler(writer, &slog.HandlerOptions{
-			Level:     Levels[level],
-			AddSource: true,
-		}),
-	})
-}
 
-// NewWithStack create new file logger
-//
-//	file: log file path
-//	level: log level: debug, info, warn, error
-//	maxSize: the maximum size in bytes of the log file before it gets rotated
-//	maxBackups: the maximum number of old log files to retain
-func NewWithStack(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) *slog.Logger {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(o)
+		}
+	}
+
+	if o.Level == nil {
+		o.Level = Levels[o.level]
+	}
+
 	writer := &FileWriter{
 		EnsureFolder: true,
 		Filename:     file,
-		MaxBackups:   maxBackups,
-		MaxSize:      maxSize,
+		MaxBackups:   o.maxBackups,
+		MaxSize:      o.maxSize,
 		LocalTime:    true,
 	}
-	if len(opts) == 1 && opts[0] != nil {
-		return slog.New(&goIDHandler{
-			handler:    slog.NewJSONHandler(writer, opts[0]),
-			stacktrace: true,
-		})
+
+	var handler slog.Handler
+	if o.format == FormatText {
+		handler = slog.NewTextHandler(writer, &o.HandlerOptions)
+	} else {
+		handler = slog.NewJSONHandler(writer, &o.HandlerOptions)
 	}
+
 	return slog.New(&goIDHandler{
-		handler: slog.NewJSONHandler(writer, &slog.HandlerOptions{
-			Level: Levels[level],
-		}),
-		stacktrace: true,
+		handler:    handler,
+		stackTrace: o.stackTrace,
 	})
 }
 
 // SetDefault set global default logger
 //
 //	file: log file path
-//	level: log level: debug, info, warn, error
-//	maxSize: the maximum size in bytes of the log file before it gets rotated
-//	maxBackups: the maximum number of old log files to retain
-func SetDefault(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) {
-	slog.SetDefault(New(file, level, maxSize, maxBackups, opts...))
-}
-
-// SetDefaultWithStack set global default logger
-//
-//	file: log file path
-//	level: log level: debug, info, warn, error
-//	maxSize: the maximum size in bytes of the log file before it gets rotated
-//	maxBackups: the maximum number of old log files to retain
-func SetDefaultWithStack(file, level string, maxSize int64, maxBackups int, opts ...*slog.HandlerOptions) {
-	slog.SetDefault(NewWithStack(file, level, maxSize, maxBackups, opts...))
+//	opts: functional options to configure the logger
+func SetDefault(file string, opts ...Option) {
+	slog.SetDefault(New(file, opts...))
 }

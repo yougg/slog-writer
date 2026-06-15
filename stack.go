@@ -108,17 +108,18 @@ func Take(skip int) string {
 
 	obj := bufferPool.Get()
 	buffer := obj.(*bytes.Buffer)
+	buffer.Reset()
 	defer bufferPool.Put(buffer)
 
-	stackfmt := NewFormatter(buffer)
-	stackfmt.FormatStack(stack)
+	stackFmt := NewFormatter(buffer)
+	stackFmt.FormatStack(stack)
 	return buffer.String()
 }
 
 // Formatter formats a stack trace into a readable string representation.
 type Formatter struct {
 	b        *bytes.Buffer
-	nonEmpty bool // whehther we've written at least one frame already
+	nonEmpty bool // whether we've written at least one frame already
 }
 
 // NewFormatter builds a new Formatter.

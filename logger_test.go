@@ -3,6 +3,7 @@ package slogw
 import (
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func TestNew(t *testing.T) {
 			name: "test_log",
 			args: args{
 				file:       "test.log",
-				level:      "info",
+				level:      LevelInfo,
 				maxSize:    1024,
 				maxBackups: 3,
 			},
@@ -44,7 +45,11 @@ func TestNew(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := New(tt.args.file, tt.args.level, tt.args.maxSize, tt.args.maxBackups)
+			logger := New(tt.args.file,
+				WithLevel(tt.args.level),
+				WithMaxSize(tt.args.maxSize),
+				WithMaxBackups(tt.args.maxBackups),
+			)
 			logger.Debug("debug log message")
 			logger.Info("info log", `case`, tt.name, `file`, tt.args.file, `level`, tt.args.level)
 			logger.Warn("warning message")
@@ -68,7 +73,7 @@ func TestSetDefault(t *testing.T) {
 			name: "default_log",
 			args: args{
 				file:       "default.log",
-				level:      "debug",
+				level:      LevelDebug,
 				maxSize:    1024,
 				maxBackups: 3,
 			},
@@ -76,11 +81,58 @@ func TestSetDefault(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			SetDefault(tt.args.file, tt.args.level, tt.args.maxSize, tt.args.maxBackups)
+			SetDefault(tt.args.file,
+				WithLevel(tt.args.level),
+				WithMaxSize(tt.args.maxSize),
+				WithMaxBackups(tt.args.maxBackups),
+			)
 			slog.Debug("debug log", `case`, tt.name, `file`, tt.args.file, `level`, tt.args.level)
 			slog.Info("information message")
 			slog.Warn("warning message")
 			slog.Error("error......")
 		})
+	}
+}
+
+func TestNewWithOptions(t *testing.T) {
+	t.Run("FormatText", func(t *testing.T) {
+		logger := New("test_text.log",
+			WithLevel(LevelInfo),
+			WithMaxSize(1024),
+			WithMaxBackups(3),
+			WithFormat(FormatText),
+		)
+		logger.Info("text format log")
+	})
+
+	t.Run("FormatJSON", func(t *testing.T) {
+		logger := New("test_json.log",
+			WithLevel(LevelInfo),
+			WithMaxSize(1024),
+			WithMaxBackups(3),
+			WithFormat(FormatJSON),
+		)
+		logger.Info("json format log")
+	})
+
+	t.Run("WithStack", func(t *testing.T) {
+		logger := New("test_stack.log",
+			WithLevel(LevelInfo),
+			WithMaxSize(1024),
+			WithMaxBackups(3),
+			WithFormat(FormatJSON),
+			WithStack(true),
+		)
+		logger.Info("stack trace log")
+	})
+}
+
+func TestTakeDuplicate(t *testing.T) {
+	for range 5 {
+		stackStr := Take(0)
+		count := strings.Count(stackStr, "TestTakeDuplicate")
+		if count > 1 {
+			t.Fatalf("Take() return with duplicates, count: %d, stack: %s", count, stackStr)
+		}
 	}
 }
