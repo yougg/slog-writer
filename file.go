@@ -3,7 +3,7 @@ package slogw
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +75,9 @@ type FileWriter struct {
 
 	// EnsureFolder ensures the file directory creation before writing.
 	EnsureFolder bool
+
+	// DisableSymlink disables using symlink for the current log file.
+	DisableSymlink bool
 
 	// Header specifies an optional header function of log file after rotation,
 	Header func(fileInfo os.FileInfo) []byte
@@ -150,6 +153,44 @@ func (w *FileWriter) Rotate() (err error) {
 }
 
 func (w *FileWriter) rotate() (err error) {
+	if w.DisableSymlink {
+		if w.file != nil {
+			_ = w.file.Close()
+			w.file = nil
+		}
+
+		backupName, _, _ := w.fileArgs(time.Now())
+		if _, err := os.Stat(w.Filename); err == nil {
+			if err := os.Rename(w.Filename, backupName); err != nil {
+				return err
+			}
+		}
+
+		file, err := os.OpenFile(w.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, w.filePerm())
+		if err != nil {
+			return err
+		}
+		w.file = file
+		w.size = 0
+
+		if w.Header != nil {
+			st, err := file.Stat()
+			if err != nil {
+				return err
+			}
+			if b := w.Header(st); b != nil {
+				n, err := w.file.Write(b)
+				w.size += int64(n)
+				if err != nil {
+					return nil
+				}
+			}
+		}
+
+		go w.cleanOldBackups(backupName)
+		return nil
+	}
+
 	var file *os.File
 	file, err = os.OpenFile(w.fileArgs(time.Now()))
 	if err != nil {
@@ -179,55 +220,22 @@ func (w *FileWriter) rotate() (err error) {
 		return err
 	}
 
-	go func(newName string) {
-		uid, _ := strconv.Atoi(os.Getenv("SUDO_UID"))
-		gid, _ := strconv.Atoi(os.Getenv("SUDO_GID"))
-		if uid != 0 && gid != 0 && os.Geteuid() == 0 {
-			_ = os.Lchown(w.Filename, uid, gid)
-			_ = os.Chown(newName, uid, gid)
-		}
-
-		dir := filepath.Dir(w.Filename)
-		dirfile, err := os.Open(dir)
-		if err != nil {
-			return
-		}
-		infos, err := dirfile.Readdir(-1)
-		dirfile.Close()
-		if err != nil {
-			return
-		}
-
-		base, ext := filepath.Base(w.Filename), filepath.Ext(w.Filename)
-		prefix, extgz := base[:len(base)-len(ext)]+".", ext+".gz"
-		exclude := prefix + "error" + ext
-
-		matches := make([]os.FileInfo, 0)
-		for _, info := range infos {
-			name := info.Name()
-			if name != base && name != exclude &&
-				strings.HasPrefix(name, prefix) &&
-				(strings.HasSuffix(name, ext) || strings.HasSuffix(name, extgz)) {
-				matches = append(matches, info)
-			}
-		}
-		sort.Slice(matches, func(i, j int) bool {
-			return matches[i].ModTime().Unix() < matches[j].ModTime().Unix()
-		})
-
-		if w.Cleaner != nil {
-			w.Cleaner(w.Filename, w.MaxBackups, matches)
-		} else {
-			for i := 0; i < len(matches)-w.MaxBackups-1; i++ {
-				_ = os.Remove(filepath.Join(dir, matches[i].Name()))
-			}
-		}
-	}(w.file.Name())
-
+	go w.cleanOldBackups(w.file.Name())
 	return
 }
 
 func (w *FileWriter) create() (err error) {
+	if w.DisableSymlink {
+		ok, err := w.openExistingFile()
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		return w.rotate()
+	}
+
 	if !w.ProcessID {
 		ok, err := w.openExistingLinkedFile()
 		if ok || err != nil {
@@ -364,4 +372,101 @@ func (w *FileWriter) filePerm() os.FileMode {
 		return w.FileMode
 	}
 	return 0644
+}
+
+func (w *FileWriter) openExistingFile() (ok bool, err error) {
+	_, err = os.Stat(w.Filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	file, err := os.OpenFile(w.Filename, os.O_APPEND|os.O_WRONLY, w.filePerm())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return true, err
+	}
+
+	st, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return true, err
+	}
+
+	w.file = file
+	w.size = st.Size()
+	if w.MaxSize > 0 && w.size > w.MaxSize {
+		_ = w.file.Close()
+		w.file = nil
+		w.size = 0
+		return false, nil
+	}
+	if w.size == 0 && w.Header != nil {
+		if b := w.Header(st); b != nil {
+			n, err := w.file.Write(b)
+			w.size += int64(n)
+			if err != nil {
+				return true, err
+			}
+		}
+	}
+
+	return true, nil
+}
+
+func (w *FileWriter) cleanOldBackups(newName string) {
+	uid, _ := strconv.Atoi(os.Getenv("SUDO_UID"))
+	gid, _ := strconv.Atoi(os.Getenv("SUDO_GID"))
+	if uid != 0 && gid != 0 && os.Geteuid() == 0 {
+		_ = os.Lchown(w.Filename, uid, gid)
+		_ = os.Chown(newName, uid, gid)
+	}
+
+	dir := filepath.Dir(w.Filename)
+	dirfile, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	infos, err := dirfile.Readdir(-1)
+	dirfile.Close()
+	if err != nil {
+		return
+	}
+
+	base, ext := filepath.Base(w.Filename), filepath.Ext(w.Filename)
+	prefix, extgz := base[:len(base)-len(ext)]+".", ext+".gz"
+	exclude := prefix + "error" + ext
+
+	matches := make([]os.FileInfo, 0, len(infos))
+	for _, info := range infos {
+		name := info.Name()
+		if name != base && name != exclude &&
+			strings.HasPrefix(name, prefix) &&
+			(strings.HasSuffix(name, ext) || strings.HasSuffix(name, extgz)) {
+			matches = append(matches, info)
+		}
+	}
+
+	slices.SortFunc(matches, func(a, b os.FileInfo) int {
+		ta, tb := a.ModTime().Unix(), b.ModTime().Unix()
+		if ta < tb {
+			return -1
+		}
+		if ta > tb {
+			return 1
+		}
+		return 0
+	})
+
+	if w.Cleaner != nil {
+		w.Cleaner(w.Filename, w.MaxBackups, matches)
+	} else {
+		for i := 0; i < len(matches)-w.MaxBackups-1; i++ {
+			_ = os.Remove(filepath.Join(dir, matches[i].Name()))
+		}
+	}
 }

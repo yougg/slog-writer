@@ -121,6 +121,7 @@ type options struct {
 	maxSize    int64
 	maxBackups int
 	stackTrace bool
+	symlink    bool
 }
 
 // Option defines the function type to configure options.
@@ -175,14 +176,22 @@ func WithStack(stacktrace bool) Option {
 	}
 }
 
+// WithSymlink sets whether to use symlink for the current log file.
+func WithSymlink(symlink bool) Option {
+	return func(o *options) {
+		o.symlink = symlink
+	}
+}
+
 // New create new file logger
 //
 //	file: log file path
 //	opts: functional options to configure the logger
 func New(file string, opts ...Option) *slog.Logger {
 	o := &options{
-		format: FormatText,
-		level:  LevelInfo,
+		format:  FormatText,
+		level:   LevelInfo,
+		symlink: true,
 	}
 
 	for _, opt := range opts {
@@ -220,11 +229,12 @@ func New(file string, opts ...Option) *slog.Logger {
 	}
 
 	writer := &FileWriter{
-		EnsureFolder: true,
-		Filename:     file,
-		MaxBackups:   o.maxBackups,
-		MaxSize:      o.maxSize,
-		LocalTime:    true,
+		EnsureFolder:   true,
+		Filename:       file,
+		MaxBackups:     o.maxBackups,
+		MaxSize:        o.maxSize,
+		LocalTime:      true,
+		DisableSymlink: !o.symlink,
 	}
 
 	var handler slog.Handler

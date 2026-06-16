@@ -202,7 +202,7 @@ func TestDynamicConfiguration(t *testing.T) {
 		t.Fatalf("expected 6 logs, got %d", len(logs))
 	}
 
-	// 1. 信息消息 1
+	// 1. Info message 1
 	if logs[0]["msg"] != "info msg 1" {
 		t.Errorf("log 0 msg mismatch: %v", logs[0]["msg"])
 	}
@@ -213,12 +213,12 @@ func TestDynamicConfiguration(t *testing.T) {
 		t.Errorf("log 0 should not contain stack")
 	}
 
-	// 2. 调试消息 2
+	// 2. Debug message 2
 	if logs[1]["msg"] != "debug msg 2" {
 		t.Errorf("log 1 msg mismatch: %v", logs[1]["msg"])
 	}
 
-	// 3. 信息消息 2
+	// 3. Info message 2
 	if logs[2]["msg"] != "info msg 2" {
 		t.Errorf("log 2 msg mismatch: %v", logs[2]["msg"])
 	}
@@ -226,7 +226,7 @@ func TestDynamicConfiguration(t *testing.T) {
 		t.Errorf("log 2 should contain source")
 	}
 
-	// 4. 信息消息 3
+	// 4. Info message 3
 	if logs[3]["msg"] != "info msg 3" {
 		t.Errorf("log 3 msg mismatch: %v", logs[3]["msg"])
 	}
@@ -234,7 +234,7 @@ func TestDynamicConfiguration(t *testing.T) {
 		t.Errorf("log 3 should contain stack")
 	}
 
-	// 5. 派生信息消息
+	// 5. Derived info message
 	if logs[4]["msg"] != "info subMsg" {
 		t.Errorf("log 4 msg mismatch: %v", logs[4]["msg"])
 	}
@@ -248,7 +248,7 @@ func TestDynamicConfiguration(t *testing.T) {
 		t.Errorf("log 4 should contain stack")
 	}
 
-	// 6. 警告消息 4
+	// 6. Warning message 4
 	if logs[5]["msg"] != "warn msg 4" {
 		t.Errorf("log 5 msg mismatch: %v", logs[5]["msg"])
 	}
@@ -370,4 +370,77 @@ func TestDynamicConfigurationConcurrency(t *testing.T) {
 	})
 
 	wg.Wait()
+}
+
+func TestDisableSymlinkRotation(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "nosymlink.log")
+
+	// 1. Initialize a Logger with symlink disabled
+	logger := New(logFile,
+		WithSymlink(false),
+		WithMaxSize(50),
+		WithLevel(LevelInfo),
+		WithFormat(FormatText),
+	)
+
+	// Write the first log message
+	logger.Info("init message")
+
+	// Verify it is indeed not a symlink
+	info, err := os.Lstat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat log file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected log file not to be a symlink")
+	}
+
+	// Write more logs to trigger multiple rotations
+	for i := range 10 {
+		logger.Info("excessive message to force rotation", "idx", i)
+	}
+
+	// Verify the active log file still exists and is not a symlink
+	info2, err := os.Lstat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat active log file after rotations: %v", err)
+	}
+	if info2.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("active log file after rotations should not be a symlink")
+	}
+
+	// Verify that backup files are indeed generated in the directory
+	files, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read temp dir: %v", err)
+	}
+
+	var backupCount int
+	for _, f := range files {
+		name := f.Name()
+		if name != "nosymlink.log" && strings.HasPrefix(name, "nosymlink.") && strings.HasSuffix(name, ".log") {
+			backupCount++
+		}
+	}
+	if backupCount == 0 {
+		t.Fatal("expected rotated backup files to be created, but found none")
+	}
+
+	// 2. Verify that re-initializing this Logger allows continuing to append in direct write mode
+	logger2 := New(logFile,
+		WithSymlink(false),
+		WithMaxSize(1024),
+		WithLevel(LevelInfo),
+		WithFormat(FormatText),
+	)
+	logger2.Info("re-initialized active write")
+
+	info3, err := os.Lstat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat log file after re-init: %v", err)
+	}
+	if info3.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("re-initialized log file should not be a symlink")
+	}
 }
