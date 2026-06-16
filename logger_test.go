@@ -444,3 +444,56 @@ func TestDisableSymlinkRotation(t *testing.T) {
 		t.Fatal("re-initialized log file should not be a symlink")
 	}
 }
+
+func TestSwitchFromSymlinkToNoSymlink(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "switch.log")
+
+	// 1. 首先以开启软链接的模式初始化一个 Logger，并写入一条日志
+	logger1 := New(logFile,
+		WithSymlink(true),
+		WithLevel(LevelInfo),
+	)
+	logger1.Info("symlink write")
+
+	// 验证 logFile 目前确实是一个软链接
+	info, err := os.Lstat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat log file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("expected log file to be a symlink")
+	}
+
+	// 2. 然后切换为禁用软链接模式重新初始化 Logger，并写入日志
+	logger2 := New(logFile,
+		WithSymlink(false),
+		WithLevel(LevelInfo),
+	)
+	logger2.Info("no symlink write")
+
+	// 验证原来的软链接已被删除，并且现在的 logFile 是一个普通的日志文件
+	info2, err := os.Lstat(logFile)
+	if err != nil {
+		t.Fatalf("failed to stat active log file after switch: %v", err)
+	}
+	if info2.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected log file not to be a symlink after switch")
+	}
+
+	// 验证目录中没有产生类似于 "switch.*.log" 的任何软链接备份文件，实际上当前目录不应含有任何软链接
+	files, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("failed to read directory: %v", err)
+	}
+
+	for _, f := range files {
+		info, err := os.Lstat(filepath.Join(tempDir, f.Name()))
+		if err != nil {
+			t.Fatalf("failed to stat file %s: %v", f.Name(), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("found unexpected symlink file: %s", f.Name())
+		}
+	}
+}

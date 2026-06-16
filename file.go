@@ -375,12 +375,20 @@ func (w *FileWriter) filePerm() os.FileMode {
 }
 
 func (w *FileWriter) openExistingFile() (ok bool, err error) {
-	_, err = os.Stat(w.Filename)
+	info, err := os.Lstat(w.Filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		err = os.Remove(w.Filename)
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+		return false, nil
 	}
 
 	file, err := os.OpenFile(w.Filename, os.O_APPEND|os.O_WRONLY, w.filePerm())
